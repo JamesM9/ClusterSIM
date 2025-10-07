@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: px4_controller
+      POSTGRES_USER: px4_user
+      POSTGRES_PASSWORD: px4_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U px4_user -d px4_controller"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PX4 Controller API
+  controller:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/controller.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://px4_user:px4_password@postgres:5432/px4_controller
+      SECRET_KEY: your-secret-key-change-in-production
+      AGENT_API_KEY: agent-registration-key
+      DEBUG: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - controller_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Web GUI
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/frontend.Dockerfile
+    depends_on:
+      controller:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    environment:
+      REACT_APP_API_URL: http://localhost
+
+  # PX4 Agent (example)
+  agent:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/agent.Dockerfile
+    environment:
+      CONTROLLER_URL: http://controller:8000/api/v1/register
+      AGENT_API_KEY: agent-registration-key
+      NODE_ID: docker-agent-01
+      NAME: Docker Agent 01
+    depends_on:
+      controller:
+        condition: service_healthy
+    ports:
+      - "8443:8443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    privileged: true  # Required for Docker-in-Docker
+
+volumes:
+  postgres_data:
+  controller_data:
+
+networks:
+  default:
+    driver: bridge

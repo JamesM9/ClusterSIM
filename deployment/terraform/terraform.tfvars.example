@@ -1,0 +1,19 @@
+# Azure configuration
+resource_group_name = "px4-cloud-sim"
+location          = "East US"
+
+# VM sizes
+controller_vm_size = "Standard_B2s"  # 2 vCPUs, 4 GB RAM
+agent_vm_size     = "Standard_B4ms"  # 4 vCPUs, 16 GB RAM
+
+# Number of agent VMs
+agent_count = 2
+
+# VM admin configuration
+admin_username = "azureuser"
+ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... your-public-key-here"
+
+# Optional: Domain and SSL
+controller_domain     = ""
+ssl_certificate_path  = ""
+ssl_private_key_path  = ""

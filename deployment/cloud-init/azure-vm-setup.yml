@@ -1,0 +1,127 @@
+#cloud-config
+
+# Update system packages
+package_update: true
+package_upgrade: true
+
+# Install required packages
+packages:
+  - docker.io
+  - python3-pip
+  - python3-venv
+  - curl
+  - git
+  - htop
+  - nano
+
+# Create directories
+runcmd:
+  # Install Docker
+  - systemctl enable --now docker
+  - usermod -aG docker azureuser
+  
+  # Pull PX4 simulation image
+  - docker pull px4io/px4-dev-simulation:latest
+  
+  # Create agent directory
+  - mkdir -p /opt/px4-agent
+  - chown azureuser:azureuser /opt/px4-agent
+  
+  # Install Python dependencies
+  - pip3 install fastapi uvicorn httpx docker python-dotenv psutil
+  
+  # Create agent service file
+  - |
+    cat > /etc/systemd/system/px4-agent.service <<'EOF'
+    [Unit]
+    Description=PX4 Cloud Agent
+    After=network.target docker.service
+    Requires=docker.service
+    
+    [Service]
+    Type=simple
+    User=azureuser
+    WorkingDirectory=/opt/px4-agent
+    Environment=CONTROLLER_URL=https://YOUR_CONTROLLER_IP:8000/api/v1/register
+    Environment=AGENT_API_KEY=agent-registration-key
+    Environment=NODE_ID=azure-vm-$(hostname)
+    Environment=NAME=Azure VM $(hostname)
+    Environment=PUBLIC_ADDRESS=$(curl -s ifconfig.me)
+    ExecStart=/usr/bin/python3 /opt/px4-agent/agent.py --host 0.0.0.0 --port 8443
+    Restart=always
+    RestartSec=10
+    
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+  
+  # Copy agent code (you would replace this with actual deployment)
+  - |
+    cat > /opt/px4-agent/agent.py <<'AGENT_CODE'
+    # This would be replaced with the actual agent.py content
+    # For now, just a placeholder that registers with controller
+    import requests
+    import socket
+    import os
+    import time
+    
+    def register_with_controller():
+        try:
+            data = {
+                "node_id": os.environ.get("NODE_ID", f"azure-{socket.gethostname()}"),
+                "name": os.environ.get("NAME", socket.gethostname()),
+                "address": os.environ.get("PUBLIC_ADDRESS", "127.0.0.1"),
+                "tags": ["azure-vm", "px4-agent"],
+                "api_key": os.environ.get("AGENT_API_KEY", "agent-registration-key"),
+                "cpu_cores": 4,
+                "memory_gb": 8,
+                "disk_gb": 50
+            }
+            
+            controller_url = os.environ.get("CONTROLLER_URL", "http://localhost:8000/api/v1/register")
+            response = requests.post(controller_url, json=data, timeout=10, verify=False)
+            print(f"Registration response: {response.status_code}")
+        except Exception as e:
+            print(f"Registration failed: {e}")
+    
+    if __name__ == "__main__":
+        while True:
+            register_with_controller()
+            time.sleep(60)
+    AGENT_CODE
+  
+  # Set permissions and enable service
+  - chown azureuser:azureuser /opt/px4-agent/agent.py
+  - chmod +x /opt/px4-agent/agent.py
+  - systemctl daemon-reload
+  - systemctl enable px4-agent
+  - systemctl start px4-agent
+  
+  # Configure firewall (if ufw is available)
+  - ufw allow 8443/tcp || true
+  - ufw allow 14560:14570/udp || true
+  
+  # Create a simple health check script
+  - |
+    cat > /opt/px4-agent/health-check.py <<'EOF'
+    #!/usr/bin/env python3
+    import requests
+    import sys
+    
+    try:
+        response = requests.get("http://localhost:8443/health", timeout=5)
+        if response.status_code == 200:
+            print("Agent is healthy")
+            sys.exit(0)
+        else:
+            print(f"Agent health check failed: {response.status_code}")
+            sys.exit(1)
+    except Exception as e:
+        print(f"Health check failed: {e}")
+        sys.exit(1)
+    EOF
+  
+  - chmod +x /opt/px4-agent/health-check.py
+
+# Final message
+final_message: "PX4 Agent setup complete. Check status with: systemctl status px4-agent"
